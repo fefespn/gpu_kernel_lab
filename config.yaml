@@ -1,0 +1,85 @@
+# GPU Kernel Lab Configuration
+# ================================
+
+# Hardware configuration
+hardware:
+  # Options: "native" (Blackwell sm_100) or "compile_only" (non-Blackwell, e.g. RTX 3060)
+  # In compile_only mode, kernels compile for sm_100 but skip execution
+  hardware_mode: native
+  
+  # Target SM architecture for compilation
+  target_sm: 100
+  
+  # CUDA tools paths
+  ptxas_path: /usr/local/cuda/bin/ptxas
+  cuobjdump_path: /usr/local/cuda/bin/cuobjdump
+
+# Output directory for artifacts (PTX, CUBIN, SASS, reports)
+output_dir: outputs
+
+# Kernel configurations
+kernels:
+  add:
+    enabled: true
+    # Available backends: cublas, triton, cutile, pytorch
+    backends:
+      - triton
+      - cutile
+      - pytorch
+      - cublas
+    # Tile/block size for kernel execution
+    tile_size: 16
+
+# Test configurations
+tests:
+  enabled: true
+  # Which backends to test
+  backends:
+    - triton
+    #- cutile
+    - pytorch
+    - cublas
+  # Input sizes for correctness tests
+  sizes:
+    - 1024
+    - 4096
+    - 16384
+    - 65536
+  # Data types to test
+  dtypes:
+    - float32
+    - float16
+
+# Benchmark configurations
+benchmarks:
+  enabled: false
+  # Which backends to benchmark
+  backends:
+    - triton
+    - cutile
+    - pytorch
+    - cublas
+  # Input sizes for benchmarks
+  sizes:
+    - 65536
+    - 262144
+    - 1048576
+    - 4194304
+  # Warmup iterations before timing
+  warmup_iterations: 10
+  # Number of benchmark iterations
+  benchmark_iterations: 100
+  # Metrics to compute
+  metrics:
+    - latency_us
+    - tflops
+    - memory_bandwidth_gbps
+
+# SASS analysis configuration
+sass_analysis:
+  enabled: true
+  # Pairs of backends to compare SASS
+  compare_pairs:
+    - [triton, cutile]
+  # Save PTX, CUBIN, SASS artifacts
+  save_artifacts: true
