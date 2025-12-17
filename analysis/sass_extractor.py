@@ -58,47 +58,46 @@ class SassExtractor:
         
         artifacts = SassArtifacts(backend='triton', kernel_name=kernel_name)
         
+        # Backend-specific output directory
+        backend_output_dir = os.path.join(self.output_dir, 'triton')
+        
         if 'ptx' in result['artifacts']:
             artifacts.ptx_path = result['artifacts']['ptx']
         
         if 'cubin' in result['artifacts']:
             artifacts.cubin_path = result['artifacts']['cubin']
-            
-            # Extract SASS using cuobjdump
-            sass_path = os.path.join(
-                self.output_dir,
-                f"triton_{kernel_name}_sm{self.target_sm}.sass"
-            )
-            
-            try:
-                with open(sass_path, 'w') as f:
-                    subprocess.run(
-                        [self.cuobjdump_path, '-sass', artifacts.cubin_path],
-                        stdout=f,
-                        check=True
-                    )
-                artifacts.sass_path = sass_path
-                
-                # Read SASS content
-                with open(sass_path) as f:
-                    artifacts.sass_content = f.read()
-                    
-            except subprocess.CalledProcessError as e:
-                print(f"Error extracting SASS: {e}")
-            except FileNotFoundError:
-                print(f"cuobjdump not found at {self.cuobjdump_path}")
         
-        # Also try Python-based SASS extraction
-        sass_code = kernel.get_sass()
-        if sass_code and not artifacts.sass_content:
-            artifacts.sass_content = sass_code
-            sass_py_path = os.path.join(
-                self.output_dir,
-                f"triton_{kernel_name}_sm{self.target_sm}_python.sass"
-            )
-            with open(sass_py_path, 'w') as f:
-                f.write(sass_code)
-            artifacts.sass_path = sass_py_path
+        # SASS is now extracted during compile, just read it
+        if 'sass' in result['artifacts']:
+            artifacts.sass_path = result['artifacts']['sass']
+            with open(artifacts.sass_path) as f:
+                artifacts.sass_content = f.read()
+        else:
+            # Fallback: try to extract manually
+            sass_path = os.path.join(backend_output_dir, f"{kernel_name}_sm{self.target_sm}.sass")
+            
+            if artifacts.cubin_path:
+                try:
+                    with open(sass_path, 'w') as f:
+                        subprocess.run(
+                            [self.cuobjdump_path, '-sass', artifacts.cubin_path],
+                            stdout=f,
+                            check=True
+                        )
+                    artifacts.sass_path = sass_path
+                    with open(sass_path) as f:
+                        artifacts.sass_content = f.read()
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    print(f"Error extracting SASS: {e}")
+            
+            # Python-based extraction as last fallback
+            if not artifacts.sass_content:
+                sass_code = kernel.get_sass()
+                if sass_code:
+                    artifacts.sass_content = sass_code
+                    with open(sass_path, 'w') as f:
+                        f.write(sass_code)
+                    artifacts.sass_path = sass_path
         
         return artifacts
     
@@ -119,64 +118,37 @@ class SassExtractor:
         
         artifacts = SassArtifacts(backend='cutile', kernel_name=kernel_name)
         
-        # cuTile stores artifacts in CUDA_TILE_TEMP_DIR
+        # Backend-specific output directory
+        backend_output_dir = os.path.join(self.output_dir, 'cutile')
+        
         if 'ptx' in result['artifacts']:
             artifacts.ptx_path = result['artifacts']['ptx']
         
         if 'cubin' in result['artifacts']:
             artifacts.cubin_path = result['artifacts']['cubin']
-            
-            # Extract SASS
-            sass_path = os.path.join(
-                self.output_dir,
-                f"cutile_{kernel_name}_sm{self.target_sm}.sass"
-            )
-            
-            try:
-                with open(sass_path, 'w') as f:
-                    subprocess.run(
-                        [self.cuobjdump_path, '-sass', artifacts.cubin_path],
-                        stdout=f,
-                        check=True
-                    )
-                artifacts.sass_path = sass_path
-                
-                with open(sass_path) as f:
-                    artifacts.sass_content = f.read()
-                    
-            except subprocess.CalledProcessError as e:
-                print(f"Error extracting SASS: {e}")
-            except FileNotFoundError:
-                print(f"cuobjdump not found at {self.cuobjdump_path}")
         
-        # Look for artifacts in output directory
-        if not artifacts.cubin_path:
-            for f in os.listdir(self.output_dir):
-                if f.endswith('.cubin') and 'cutile' not in f.lower():
-                    # Likely a cuTile-generated cubin
-                    cubin_path = os.path.join(self.output_dir, f)
-                    artifacts.cubin_path = cubin_path
-                    
-                    sass_path = os.path.join(
-                        self.output_dir,
-                        f"cutile_{kernel_name}_sm{self.target_sm}.sass"
-                    )
-                    
-                    try:
-                        with open(sass_path, 'w') as out:
-                            subprocess.run(
-                                [self.cuobjdump_path, '-sass', cubin_path],
-                                stdout=out,
-                                check=True
-                            )
-                        artifacts.sass_path = sass_path
-                        
-                        with open(sass_path) as rf:
-                            artifacts.sass_content = rf.read()
-                    except Exception as e:
-                        print(f"Error extracting cuTile SASS: {e}")
-                    
-                    break
+        # SASS is now extracted during compile, just read it
+        if 'sass' in result['artifacts']:
+            artifacts.sass_path = result['artifacts']['sass']
+            with open(artifacts.sass_path) as f:
+                artifacts.sass_content = f.read()
+        else:
+            # Fallback: try to extract manually
+            sass_path = os.path.join(backend_output_dir, f"{kernel_name}_sm{self.target_sm}.sass")
+            
+            if artifacts.cubin_path:
+                try:
+                    with open(sass_path, 'w') as f:
+                        subprocess.run(
+                            [self.cuobjdump_path, '-sass', artifacts.cubin_path],
+                            stdout=f,
+                            check=True
+                        )
+                    artifacts.sass_path = sass_path
+                    with open(sass_path) as f:
+                        artifacts.sass_content = f.read()
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    print(f"Error extracting SASS: {e}")
         
         return artifacts
     

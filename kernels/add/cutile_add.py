@@ -6,17 +6,25 @@ cuTile vector addition kernel with support for:
 """
 
 import os
+import subprocess
+import shutil
 from typing import Optional, Dict, Any
 
 # Must set CUDA_TILE_TEMP_DIR before importing cuda.tile
 _OUTPUT_DIR = None
+_BACKEND_OUTPUT_DIR = None
 
 def _setup_cutile_env(output_dir: str):
-    """Setup environment for cuTile."""
-    global _OUTPUT_DIR
-    _OUTPUT_DIR = output_dir
-    os.makedirs(output_dir, exist_ok=True)
-    os.environ['CUDA_TILE_TEMP_DIR'] = output_dir
+    """Setup environment for cuTile with backend-specific subfolder."""
+    global _OUTPUT_DIR, _BACKEND_OUTPUT_DIR
+    
+    # Backend-specific output directory
+    _BACKEND_OUTPUT_DIR = os.path.join(output_dir, 'cutile')
+    os.makedirs(_BACKEND_OUTPUT_DIR, exist_ok=True)
+    
+    # cuTile needs CUDA_TILE_TEMP_DIR for its temp files
+    _OUTPUT_DIR = _BACKEND_OUTPUT_DIR
+    os.environ['CUDA_TILE_TEMP_DIR'] = _BACKEND_OUTPUT_DIR
 
 
 class CutileAdd:
@@ -160,13 +168,43 @@ class CutileAdd:
             self._compiled = True
             status = f'compiled_only (exec error: {type(e).__name__})'
         
-        # Check for artifacts in output directory
-        if os.path.exists(self.output_dir):
-            for f in os.listdir(self.output_dir):
-                if f.endswith('.ptx'):
-                    artifacts['ptx'] = os.path.join(self.output_dir, f)
-                elif f.endswith('.cubin'):
-                    artifacts['cubin'] = os.path.join(self.output_dir, f)
+        # Backend-specific output directory
+        backend_output_dir = os.path.join(self.output_dir, 'cutile')
+        
+        # Check for artifacts and rename them with proper naming convention
+        if os.path.exists(backend_output_dir):
+            for f in os.listdir(backend_output_dir):
+                old_path = os.path.join(backend_output_dir, f)
+                
+                if f.endswith('.cubin'):
+                    # Rename to standardized name
+                    new_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.cubin")
+                    if old_path != new_path:
+                        shutil.copy2(old_path, new_path)
+                    artifacts['cubin'] = new_path
+                    
+                    # Extract SASS automatically
+                    sass_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.sass")
+                    cuobjdump_path = self.config.get('hardware', {}).get('cuobjdump_path', '/usr/local/cuda/bin/cuobjdump')
+                    
+                    try:
+                        with open(sass_path, 'w') as sf:
+                            subprocess.run(
+                                [cuobjdump_path, '-sass', new_path],
+                                stdout=sf,
+                                stderr=subprocess.DEVNULL,
+                                check=True
+                            )
+                        artifacts['sass'] = sass_path
+                        print(f"    SASS extracted: {sass_path}")
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        pass
+                
+                elif f.endswith('.ptx'):
+                    new_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.ptx")
+                    if old_path != new_path:
+                        shutil.copy2(old_path, new_path)
+                    artifacts['ptx'] = new_path
         
         return {
             'backend': self.name,

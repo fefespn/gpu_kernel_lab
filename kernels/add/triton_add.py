@@ -92,6 +92,7 @@ class TritonAdd:
         Returns:
             Dict with compilation artifacts (ptx, cubin, sass paths)
         """
+        import subprocess
         import triton.compiler as tc
         from triton.backends.compiler import GPUTarget
         
@@ -115,21 +116,47 @@ class TritonAdd:
         self._compiled = asm
         
         artifacts = {}
-        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Create backend-specific output directory
+        backend_output_dir = os.path.join(self.output_dir, 'triton')
+        os.makedirs(backend_output_dir, exist_ok=True)
         
         # Save PTX
         if 'ptx' in asm:
-            ptx_path = os.path.join(self.output_dir, f"triton_add_sm{self.target_sm}.ptx")
+            ptx_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.ptx")
             with open(ptx_path, 'w') as f:
                 f.write(asm['ptx'])
             artifacts['ptx'] = ptx_path
         
         # Save CUBIN
         if 'cubin' in asm:
-            cubin_path = os.path.join(self.output_dir, f"triton_add_sm{self.target_sm}.cubin")
+            cubin_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.cubin")
             with open(cubin_path, 'wb') as f:
                 f.write(asm['cubin'])
             artifacts['cubin'] = cubin_path
+            
+            # Extract SASS automatically during compilation
+            sass_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.sass")
+            cuobjdump_path = self.config.get('hardware', {}).get('cuobjdump_path', '/usr/local/cuda/bin/cuobjdump')
+            
+            try:
+                with open(sass_path, 'w') as f:
+                    subprocess.run(
+                        [cuobjdump_path, '-sass', cubin_path],
+                        stdout=f,
+                        stderr=subprocess.DEVNULL,
+                        check=True
+                    )
+                artifacts['sass'] = sass_path
+                print(f"    SASS extracted: {sass_path}")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                # Try Python-based extraction as fallback
+                sass_code = self.get_sass()
+                if sass_code:
+                    with open(sass_path, 'w') as f:
+                        f.write(sass_code)
+                    artifacts['sass'] = sass_path
+                    print(f"    SASS extracted (Python): {sass_path}")
         
         return {
             'backend': self.name,

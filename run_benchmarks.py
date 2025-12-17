@@ -8,7 +8,8 @@ Usage:
     python run_benchmarks.py --config custom.yaml     # Custom config
     python run_benchmarks.py --backend triton cublas  # Specific backends
     python run_benchmarks.py --sizes 65536,262144     # Specific sizes
-    python run_benchmarks.py --sass                   # Include SASS extraction
+
+For SASS comparison, use compare_sass.py (separate phase).
 """
 
 import argparse
@@ -49,11 +50,6 @@ def main():
         type=str,
         default='float32',
         help='Comma-separated list of dtypes (default: float32)'
-    )
-    parser.add_argument(
-        '--sass',
-        action='store_true',
-        help='Extract and compare SASS after benchmarking'
     )
     parser.add_argument(
         '--output-format', '-o',
@@ -126,33 +122,6 @@ def main():
     
     # Print summary
     runner.print_summary()
-    
-    # SASS extraction and comparison
-    if args.sass:
-        print("\n" + "=" * 50)
-        print("SASS EXTRACTION AND COMPARISON")
-        print("=" * 50)
-        
-        from analysis.sass_extractor import SassExtractor
-        from analysis.sass_comparator import SassComparator
-        
-        extractor = SassExtractor(args.config)
-        comparator = SassComparator(args.config)
-        
-        # Extract SASS
-        artifacts = extractor.extract_all(args.kernel)
-        
-        # Compare if we have both
-        if 'triton' in artifacts and 'cutile' in artifacts:
-            triton_sass = artifacts['triton'].sass_content
-            cutile_sass = artifacts['cutile'].sass_content
-            
-            if triton_sass and cutile_sass:
-                comparison = comparator.compare(
-                    triton_sass, cutile_sass,
-                    'triton', 'cutile'
-                )
-                comparator.save_comparison(comparison)
 
 
 if __name__ == '__main__':

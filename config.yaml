@@ -5,7 +5,7 @@
 hardware:
   # Options: "native" (Blackwell sm_100) or "compile_only" (non-Blackwell, e.g. RTX 3060)
   # In compile_only mode, kernels compile for sm_100 but skip execution
-  hardware_mode: native
+  hardware_mode: compile_only
   
   # Target SM architecture for compilation
   target_sm: 100
@@ -25,8 +25,8 @@ kernels:
     backends:
       - triton
       - cutile
-      - pytorch
-      - cublas
+      #- pytorch
+      #- cublas
     # Tile/block size for kernel execution
     tile_size: 16
 
@@ -36,9 +36,9 @@ tests:
   # Which backends to test
   backends:
     - triton
-    #- cutile
-    - pytorch
-    - cublas
+    - cutile
+    #- pytorch
+    #- cublas
   # Input sizes for correctness tests
   sizes:
     - 1024
@@ -52,13 +52,13 @@ tests:
 
 # Benchmark configurations
 benchmarks:
-  enabled: false
+  enabled: true
   # Which backends to benchmark
   backends:
     - triton
     - cutile
     - pytorch
-    - cublas
+    #- cublas
   # Input sizes for benchmarks
   sizes:
     - 65536
