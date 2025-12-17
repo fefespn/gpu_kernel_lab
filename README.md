@@ -33,10 +33,14 @@ gpu_kernel_lab/
 ├── analysis/                   # SASS analysis tools
 │   ├── sass_extractor.py       # Extract PTX/CUBIN/SASS
 │   └── sass_comparator.py      # Compare SASS between backends
-├── outputs/                    # Generated artifacts
+├── outputs/                    # Generated artifacts (organized by backend)
+│   ├── triton/                 # Triton: add_sm100.cubin, .ptx, .sass
+│   ├── cutile/                 # cuTile: add_sm100.cubin, .sass
+│   └── sass_comparison_*.txt   # SASS comparison reports
 ├── config.yaml                 # Master configuration
 ├── run_tests.py                # Test runner CLI
 ├── run_benchmarks.py           # Benchmark runner CLI
+├── compare_sass.py             # SASS comparison CLI (separate phase)
 └── requirements.txt            # Python dependencies
 ```
 
@@ -97,9 +101,6 @@ python run_tests.py --compile-only
 # Run all benchmarks
 python run_benchmarks.py
 
-# Run with SASS extraction
-python run_benchmarks.py --sass
-
 # Run specific backends and sizes
 python run_benchmarks.py --backend triton cublas --sizes 65536,262144
 
@@ -107,12 +108,44 @@ python run_benchmarks.py --backend triton cublas --sizes 65536,262144
 python run_benchmarks.py --compile-only
 ```
 
+### Compare SASS (Separate Phase)
+
+SASS comparison is a separate step that doesn't require benchmark execution.
+This is useful on non-Blackwell GPUs where you can compile but not run.
+
+```bash
+# Compare SASS between triton and cutile (default)
+python compare_sass.py
+
+# Specify backends to compare
+python compare_sass.py --backends triton cutile
+
+# Extract SASS only (no comparison)
+python compare_sass.py --extract-only
+
+# Verbose output with SASS line counts
+python compare_sass.py --verbose
+```
+
 ### Output
 
-Results are saved to `outputs/`:
-- `benchmark_results_*.json` - Detailed JSON results
-- `benchmark_results_*.csv` - CSV for spreadsheet import
-- `*.ptx`, `*.cubin`, `*.sass` - Compilation artifacts
+Results are saved to `outputs/`, organized by backend:
+
+```
+outputs/
+├── triton/
+│   ├── add_sm100.cubin          # Compiled kernel binary
+│   ├── add_sm100.ptx            # PTX intermediate
+│   └── add_sm100.sass           # SASS disassembly
+├── cutile/
+│   ├── add_sm100.cubin
+│   └── add_sm100.sass
+├── benchmark_results_*.json      # Detailed JSON results
+├── benchmark_results_*.csv       # CSV for spreadsheet import
+└── sass_comparison_*.txt         # SASS comparison reports
+```
+
+**Note:** SASS is automatically extracted during kernel compilation.
 
 ---
 
