@@ -158,16 +158,19 @@ class CutileAdd:
         backend_output_dir = os.path.join(self.output_dir, 'cutile')
         
         # Check for artifacts and rename them with proper naming convention
+        # Only process the first cubin found to avoid duplicates
+        cubin_processed = False
         if os.path.exists(backend_output_dir):
             for f in os.listdir(backend_output_dir):
                 old_path = os.path.join(backend_output_dir, f)
                 
-                if f.endswith('.cubin'):
+                if f.endswith('.cubin') and not cubin_processed:
                     # Rename to standardized name
                     new_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.cubin")
                     if old_path != new_path:
                         shutil.copy2(old_path, new_path)
                     artifacts['cubin'] = new_path
+                    cubin_processed = True
                     
                     # Extract SASS automatically
                     sass_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.sass")
@@ -186,7 +189,7 @@ class CutileAdd:
                     except (subprocess.CalledProcessError, FileNotFoundError):
                         pass
                 
-                elif f.endswith('.ptx'):
+                elif f.endswith('.ptx') and 'ptx' not in artifacts:
                     new_path = os.path.join(backend_output_dir, f"add_sm{self.target_sm}.ptx")
                     if old_path != new_path:
                         shutil.copy2(old_path, new_path)

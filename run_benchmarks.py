@@ -76,7 +76,7 @@ def main():
     # Import and run
     from benchmarks.benchmark_runner import BenchmarkRunner
     
-    runner = BenchmarkRunner(args.config)
+    runner = BenchmarkRunner(args.config, kernel=args.kernel)
     
     if args.compile_only:
         print("Compile-only mode: Compiling kernels...")

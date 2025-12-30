@@ -210,6 +210,31 @@ def get_vector_add_metrics(size: int, dtype_bytes: int = 4) -> Dict[str, int]:
     }
 
 
+def get_matmul_metrics(m: int, n: int, k: int, dtype_bytes: int = 4) -> Dict[str, int]:
+    """
+    Get theoretical metrics for matrix multiplication C = A @ B.
+    
+    Args:
+        m: Number of rows in A and C
+        n: Number of columns in B and C
+        k: Number of columns in A / rows in B
+        dtype_bytes: Bytes per element (4 for float32, 2 for float16)
+        
+    Returns:
+        Dict with 'flops' and 'bytes' keys
+    """
+    # GEMM: 2*M*N*K FLOPs (multiply-add = 2 ops per element)
+    flops = 2 * m * n * k
+    
+    # Memory: read A (M*K), read B (K*N), write C (M*N)
+    bytes_transferred = (m * k + k * n + m * n) * dtype_bytes
+    
+    return {
+        'flops': flops,
+        'bytes': bytes_transferred
+    }
+
+
 def benchmark_kernel(
     kernel,
     size: int,
@@ -289,3 +314,88 @@ def benchmark_kernel(
         memory_bandwidth_gbps=bandwidth,
         iterations=benchmark_iterations
     )
+
+
+def benchmark_matmul_kernel(
+    kernel,
+    m: int,
+    n: int,
+    k: int,
+    dtype_str: str = 'float32',
+    warmup_iterations: int = 10,
+    benchmark_iterations: int = 100,
+    use_cuda_events: bool = True
+) -> BenchmarkResult:
+    """
+    Benchmark a matmul kernel with full metrics.
+    
+    Args:
+        kernel: Kernel instance with __call__ and create_inputs methods
+        m: Number of rows in A and C
+        n: Number of columns in B and C
+        k: Number of columns in A / rows in B
+        dtype_str: Data type string ('float32' or 'float16')
+        warmup_iterations: Number of warmup runs
+        benchmark_iterations: Number of benchmark runs
+        use_cuda_events: Use CUDA events for timing
+        
+    Returns:
+        BenchmarkResult with all metrics
+    """
+    import torch
+    import numpy as np
+    
+    # Determine dtype
+    dtype_bytes = 4 if dtype_str == 'float32' else 2
+    dtype = torch.float32 if dtype_str == 'float32' else torch.float16
+    
+    # Create inputs
+    A, B, C = kernel.create_inputs(m, n, k, dtype=dtype)
+    
+    # Benchmark
+    def run():
+        kernel(A, B, C)
+    
+    if use_cuda_events:
+        try:
+            latency_us, std_us, _ = compute_latency_cuda_events(
+                run, (),
+                warmup_iterations=warmup_iterations,
+                benchmark_iterations=benchmark_iterations,
+                use_torch=True
+            )
+        except Exception:
+            # Fallback to CPU timing
+            latency_us, std_us, _ = compute_latency(
+                run, (),
+                warmup_iterations=warmup_iterations,
+                benchmark_iterations=benchmark_iterations,
+                sync_fn=torch.cuda.synchronize
+            )
+    else:
+        latency_us, std_us, _ = compute_latency(
+            run, (),
+            warmup_iterations=warmup_iterations,
+            benchmark_iterations=benchmark_iterations,
+            sync_fn=torch.cuda.synchronize
+        )
+    
+    # Compute metrics for matmul
+    metrics = get_matmul_metrics(m, n, k, dtype_bytes)
+    tflops = compute_tflops(metrics['flops'], latency_us)
+    bandwidth = compute_memory_bandwidth(metrics['bytes'], latency_us)
+    
+    # Size string for matmul: "MxNxK"
+    size_str = f"{m}x{n}x{k}"
+    
+    return BenchmarkResult(
+        backend=kernel.name,
+        size=m * n,  # Use M*N as representative size for sorting
+        dtype=dtype_str,
+        latency_us=latency_us,
+        latency_std_us=std_us,
+        tflops=tflops,
+        memory_bandwidth_gbps=bandwidth,
+        iterations=benchmark_iterations
+    )
+

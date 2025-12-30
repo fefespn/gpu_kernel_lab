@@ -15,18 +15,27 @@ A Python-based framework for benchmarking GPU kernel implementations across mult
 ```
 gpu_kernel_lab/
 ├── kernels/                    # Kernel implementations
-│   └── add/                    # Vector addition kernel
-│       ├── __init__.py         # Backend registry
-│       ├── cublas_add.py       # cuBLAS implementation
-│       ├── triton_add.py       # Triton implementation
-│       ├── cutile_add.py       # cuTile implementation
-│       └── pytorch_add.py      # PyTorch/Triton implementation
+│   ├── add/                    # Vector addition kernel
+│   │   ├── __init__.py         # Backend registry
+│   │   ├── cublas_add.py       # cuBLAS implementation
+│   │   ├── triton_add.py       # Triton implementation
+│   │   ├── cutile_add.py       # cuTile implementation
+│   │   └── pytorch_add.py      # PyTorch/Triton implementation
+│   └── matmul/                 # Matrix multiplication kernel
+│       ├── __init__.py         # Backend registry (lazy imports)
+│       ├── triton_matmul.py    # Triton implementation
+│       ├── cutile_matmul.py    # cuTile implementation (sm_100 only)
+│       └── pytorch_matmul.py   # PyTorch torch.compile implementation
 ├── tests/                      # Pytest test suites
-│   └── test_add/
-│       ├── test_cublas_add.py
-│       ├── test_triton_add.py
-│       ├── test_cutile_add.py
-│       └── test_pytorch_add.py
+│   ├── test_add/
+│   │   ├── test_cublas_add.py
+│   │   ├── test_triton_add.py
+│   │   ├── test_cutile_add.py
+│   │   └── test_pytorch_add.py
+│   └── test_matmul/
+│       ├── test_triton_matmul.py
+│       ├── test_cutile_matmul.py
+│       └── test_pytorch_matmul.py
 ├── benchmarks/                 # Benchmarking tools
 │   ├── metrics.py              # Latency, TFLOPS, bandwidth
 │   └── benchmark_runner.py     # Config-driven benchmark runner
@@ -69,12 +78,22 @@ hardware:
   hardware_mode: compile_only
   target_sm: 100
 
+# Vector add benchmarks
 benchmarks:
   enabled: true
   backends: [triton, cutile, pytorch, cublas]
   sizes: [65536, 262144, 1048576]
   warmup_iterations: 10
   benchmark_iterations: 100
+
+# Matrix multiplication - uses Cartesian product of M × N × K
+benchmarks_matmul:
+  enabled: true
+  backends: [triton, pytorch]  # cutile requires sm_100
+  M: [1024, 2048]              # 2 M values
+  N: [1024, 2048]              # 2 N values  
+  K: [1024, 2048]              # 2 K values
+  # Total combinations: 2 × 2 × 2 = 8 benchmarks per backend
 
 sass_analysis:
   enabled: true
@@ -86,7 +105,7 @@ sass_analysis:
 ### Run Tests
 
 ```bash
-# Run all enabled tests
+# Run all enabled tests (vector add)
 python run_tests.py
 
 # Run specific backend
@@ -94,12 +113,18 @@ python run_tests.py --backend triton
 
 # Run compile-only tests (for non-Blackwell GPUs)
 python run_tests.py --compile-only
+
+# Run matmul tests
+python run_tests.py --kernel matmul
+
+# Run specific matmul backend
+python run_tests.py --kernel matmul --backend triton
 ```
 
 ### Run Benchmarks
 
 ```bash
-# Run all benchmarks
+# Run vector add benchmarks
 python run_benchmarks.py
 
 # Run specific backends and sizes
@@ -107,6 +132,12 @@ python run_benchmarks.py --backend triton cublas --sizes 65536,262144
 
 # Compile-only mode (no execution)
 python run_benchmarks.py --compile-only
+
+# Run matmul benchmarks (all M×N×K combinations from config)
+python run_benchmarks.py --kernel matmul
+
+# Run matmul with specific backends
+python run_benchmarks.py --kernel matmul --backend triton pytorch
 ```
 
 ### Compare SASS (Separate Phase)
@@ -144,7 +175,7 @@ modal run run_modal.py --test-path tests/test_add/test_cutile_add.py
 modal run run_modal.py
 
 # Run benchmarks
-modal run run_modal.py --benchmark
+modal run run_modal.py --benchmark --config config.yaml
 
 # Run SASS analysis
 modal run run_modal.py --sass

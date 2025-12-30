@@ -66,15 +66,21 @@ def run_tests(
     """
     config = load_config(config_path)
     
-    # Get test configuration
-    test_config = config.get('tests', {})
+    # Determine kernel first
+    kernel = kernel or 'add'
+    
+    # Get test configuration based on kernel
+    if kernel == 'matmul':
+        test_config = config.get('tests_matmul', {})
+    else:
+        test_config = config.get('tests', {})
+    
     if not test_config.get('enabled', True):
         print("Tests disabled in config")
         return 0
     
-    # Determine kernel and backends
-    kernel = kernel or 'add'
-    backends = backends or test_config.get('backends', ['triton', 'cutile', 'pytorch', 'cublas'])
+    # Determine backends from config or override
+    backends = backends or test_config.get('backends', ['triton', 'cutile', 'pytorch'])
     
     hardware_mode = config.get('hardware', {}).get('hardware_mode', 'native')
     

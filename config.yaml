@@ -24,24 +24,32 @@ kernels:
     # Available backends: cublas, triton, cutile, pytorch
     backends:
       - triton
-      - cutile
+     # - cutile
       - pytorch
-      - cublas
+     # - cublas
     # Tile/block size for kernel execution
     tile_size: 16
+  
+  matmul:
+    enabled: true
+    # Available backends: triton, cutile, pytorch
+    backends:
+      - triton
+    #  - cutile
+      - pytorch
 
-# Test configurations
+# Test configurations for vector add
 tests:
   enabled: true
   # Filter tests by name pattern (like pytest -k). Set to null or "" to run all tests.
   # Examples: "random", "float32", "compile", "correctness"
-  name_filter: null
+  #name_filter: compile
   #name_filter: random
   # Which backends to test
   backends:
-    #- triton
-    - cutile
-    #- pytorch
+    - triton
+    #- cutile
+    - pytorch
     #- cublas
   # Input sizes for correctness tests
   sizes:
@@ -54,14 +62,33 @@ tests:
     - float32
     - float16
 
-# Benchmark configurations
+# Test configurations for matrix multiplication
+tests_matmul:
+  enabled: true
+  # Filter tests by name pattern
+  name_filter: null
+  # Which backends to test
+  backends:
+    - triton
+  #  - cutile
+    - pytorch
+  # Matrix dimensions - all combinations of M × N × K will be tested
+  M: [64, 128]
+  N: [128, 256]
+  K: [256, 512]
+  # Data types to test
+  dtypes:
+    - float32
+    - float16
+
+# Benchmark configurations for vector add
 benchmarks:
   enabled: true
   # Which backends to benchmark
   backends:
     - triton
     - cutile
-    #- pytorch
+    - pytorch
     #- cublas
   # Input sizes for benchmarks
   sizes:
@@ -81,6 +108,28 @@ benchmarks:
     - tflops
     - memory_bandwidth_gbps
 
+# Benchmark configurations for matrix multiplication
+benchmarks_matmul:
+  enabled: true
+  # Which backends to benchmark
+  backends:
+    - triton
+    #- cutile
+    - pytorch
+  # Matrix dimensions - all combinations of M × N × K will be benchmarked
+  M: [1024, 2048]
+  N: [1024, 2048]
+  K: [1024, 2048]
+  # Warmup iterations before timing
+  warmup_iterations: 5
+  # Number of benchmark iterations
+  benchmark_iterations: 20
+  # Metrics to compute
+  metrics:
+    - latency_us
+    - tflops
+    - memory_bandwidth_gbps
+
 # SASS analysis configuration
 sass_analysis:
   enabled: true
@@ -89,3 +138,4 @@ sass_analysis:
     - [triton, cutile]
   # Save PTX, CUBIN, SASS artifacts
   save_artifacts: true
+

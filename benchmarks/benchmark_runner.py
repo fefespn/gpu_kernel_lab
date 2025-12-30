@@ -11,47 +11,71 @@ from typing import Dict, List, Any, Optional
 from dataclasses import asdict
 from datetime import datetime
 
-from .metrics import benchmark_kernel, BenchmarkResult
+from .metrics import benchmark_kernel, benchmark_matmul_kernel, BenchmarkResult
 
 
 class BenchmarkRunner:
     """Run benchmarks based on configuration."""
     
-    def __init__(self, config_path: str = 'config.yaml'):
+    def __init__(self, config_path: str = 'config.yaml', kernel: str = 'add'):
         """
         Initialize benchmark runner.
         
         Args:
             config_path: Path to configuration file
+            kernel: Kernel name ('add' or 'matmul')
         """
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
         
+        self.kernel = kernel
         self.hardware_mode = self.config.get('hardware', {}).get('hardware_mode', 'native')
         self.output_dir = self.config.get('output_dir', 'outputs')
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.results: List[BenchmarkResult] = []
     
-    def get_enabled_backends(self, kernel_name: str = 'add') -> List[str]:
+    def get_benchmark_config(self) -> Dict[str, Any]:
+        """Get benchmark config based on kernel type."""
+        if self.kernel == 'matmul':
+            return self.config.get('benchmarks_matmul', {})
+        return self.config.get('benchmarks', {})
+    
+    def get_enabled_backends(self) -> List[str]:
         """Get list of enabled backends for benchmarking."""
-        benchmark_config = self.config.get('benchmarks', {})
+        benchmark_config = self.get_benchmark_config()
         if not benchmark_config.get('enabled', True):
             return []
         
         return benchmark_config.get('backends', [])
     
-    def get_sizes(self) -> List[int]:
+    def get_sizes(self) -> List:
         """Get benchmark sizes from config."""
-        return self.config.get('benchmarks', {}).get('sizes', [65536])
+        benchmark_config = self.get_benchmark_config()
+        
+        if self.kernel == 'matmul':
+            # Generate cartesian product of M × N × K
+            M_values = benchmark_config.get('M', [1024])
+            N_values = benchmark_config.get('N', [1024])
+            K_values = benchmark_config.get('K', [1024])
+            
+            from itertools import product
+            return list(product(M_values, N_values, K_values))
+        
+        return benchmark_config.get('sizes', [65536])
     
     def get_dtypes(self) -> List[str]:
         """Get data types to benchmark."""
+        if self.kernel == 'matmul':
+            return self.get_benchmark_config().get('dtypes', ['float32'])
         return self.config.get('tests', {}).get('dtypes', ['float32'])
     
     def _create_kernel(self, backend: str):
         """Create a kernel instance for the given backend."""
-        from kernels.add import get_backend
+        if self.kernel == 'matmul':
+            from kernels.matmul import get_backend
+        else:
+            from kernels.add import get_backend
         kernel_class = get_backend(backend)
         return kernel_class(self.config)
     
@@ -76,11 +100,11 @@ class BenchmarkRunner:
         sizes = sizes or self.get_sizes()
         dtypes = dtypes or self.get_dtypes()
         
-        benchmark_config = self.config.get('benchmarks', {})
+        benchmark_config = self.get_benchmark_config()
         warmup = benchmark_config.get('warmup_iterations', 10)
         iterations = benchmark_config.get('benchmark_iterations', 100)
         
-        print(f"Running benchmarks in {self.hardware_mode} mode")
+        print(f"Running {self.kernel} benchmarks in {self.hardware_mode} mode")
         print(f"Backends: {backends}")
         print(f"Sizes: {sizes}")
         print(f"Dtypes: {dtypes}")
@@ -103,15 +127,28 @@ class BenchmarkRunner:
             for size in sizes:
                 for dtype in dtypes:
                     try:
-                        print(f"Benchmarking {backend} | size={size} | dtype={dtype}...", end=" ")
-                        
-                        result = benchmark_kernel(
-                            kernel,
-                            size=size,
-                            dtype_str=dtype,
-                            warmup_iterations=warmup,
-                            benchmark_iterations=iterations
-                        )
+                        if self.kernel == 'matmul':
+                            # size is [M, N, K]
+                            m, n, k = size if isinstance(size, (list, tuple)) else (size, size, size)
+                            print(f"Benchmarking {backend} | size={m}x{n}x{k} | dtype={dtype}...", end=" ")
+                            
+                            result = benchmark_matmul_kernel(
+                                kernel,
+                                m=m, n=n, k=k,
+                                dtype_str=dtype,
+                                warmup_iterations=warmup,
+                                benchmark_iterations=iterations
+                            )
+                        else:
+                            print(f"Benchmarking {backend} | size={size} | dtype={dtype}...", end=" ")
+                            
+                            result = benchmark_kernel(
+                                kernel,
+                                size=size,
+                                dtype_str=dtype,
+                                warmup_iterations=warmup,
+                                benchmark_iterations=iterations
+                            )
                         
                         self.results.append(result)
                         
