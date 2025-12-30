@@ -110,27 +110,13 @@ class CutileAdd:
         n_elements = a.size
         grid = (ct.cdiv(n_elements, self.tile_size), 1, 1)
         
-        if self.hardware_mode == 'compile_only':
-            # In compile-only mode, we trigger compilation but catch execution error
-            try:
-                ct.launch(
-                    cp.cuda.get_current_stream(),
-                    grid,
-                    self._kernel,
-                    (a, b, c, self.tile_size)
-                )
-            except Exception as e:
-                # Expected to fail on non-Blackwell hardware
-                raise RuntimeError(
-                    f"Execution failed (expected in compile_only mode): {e}"
-                )
-        else:
-            ct.launch(
-                cp.cuda.get_current_stream(),
-                grid,
-                self._kernel,
-                (a, b, c, self.tile_size)
-            )
+        # Note: compile_only mode handled in _import_and_patch, not here for benchmark accuracy
+        ct.launch(
+            cp.cuda.get_current_stream(),
+            grid,
+            self._kernel,
+            (a, b, c, self.tile_size)
+        )
     
     def compile(self) -> Dict[str, Any]:
         """

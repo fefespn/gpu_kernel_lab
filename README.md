@@ -41,6 +41,7 @@ gpu_kernel_lab/
 ├── run_tests.py                # Test runner CLI
 ├── run_benchmarks.py           # Benchmark runner CLI
 ├── compare_sass.py             # SASS comparison CLI (separate phase)
+├── run_modal.py                # Modal.com deployment for B200 GPUs
 └── requirements.txt            # Python dependencies
 ```
 
@@ -125,6 +126,28 @@ python compare_sass.py --extract-only
 
 # Verbose output with SASS line counts
 python compare_sass.py --verbose
+```
+
+### Run on Modal.com (B200 GPUs)
+
+For running on cloud B200 GPUs via Modal:
+
+```bash
+# Install Modal
+pip install modal
+modal token new  # Authenticate if needed
+
+# Run specific test on B200
+modal run run_modal.py --test-path tests/test_add/test_cutile_add.py
+
+# Run all tests
+modal run run_modal.py
+
+# Run benchmarks
+modal run run_modal.py --benchmark
+
+# Run SASS analysis
+modal run run_modal.py --sass
 ```
 
 ### Output
@@ -292,6 +315,11 @@ In `compile_only` mode:
 - **Triton**: Uses AOT compilation with `GPUTarget("cuda", 100, 64)`
 - **cuTile**: Monkey-patches `get_sm_arch()` to return `'sm_100'`
 - Execution tests are skipped; only compile tests run
+
+### Backend Notes
+
+- **cuBLAS**: Uses GEMM (matrix multiplication) to trigger cuBLAS JIT compilation and cubin dumping via `CUDA_DUMP_CUBIN=1`. Vector addition alone may not reliably trigger cuBLAS or dump a cubin.
+- **Triton/cuTile**: Extract SASS directly from compiled kernels
 
 ## License
 

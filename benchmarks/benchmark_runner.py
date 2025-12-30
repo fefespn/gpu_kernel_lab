@@ -84,6 +84,8 @@ class BenchmarkRunner:
         print(f"Backends: {backends}")
         print(f"Sizes: {sizes}")
         print(f"Dtypes: {dtypes}")
+        print(f"Warmup iterations: {warmup}")
+        print(f"Benchmark iterations: {iterations}")
         print("-" * 60)
         
         for backend in backends:

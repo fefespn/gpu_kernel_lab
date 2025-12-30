@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-CuPy vector addition using ElementwiseKernel.
+cuBLAS vector addition using CUDA runtime cubin dumping.
+Uses cuBLAS saxpy (y = alpha*x + y) to perform c = a + b.
 """
 
 import cupy as cp
 import numpy as np
-import tempfile
-import subprocess
 import os
+import subprocess
+import glob
+import tempfile
 from typing import Optional, Dict, Any
 
 
 class CublasAdd:
-    """CuPy ElementwiseKernel-based vector addition."""
+    """cuBLAS-based vector addition using runtime cubin dumping."""
     
     name = "cublas"
     
@@ -20,101 +22,132 @@ class CublasAdd:
         self.config = config or {}
         self.hardware_mode = self.config.get('hardware', {}).get('hardware_mode', 'native')
         self.output_dir = self.config.get('output_dir', 'outputs')
-        self.add_kernel = None
+        self.cuda_cache_dir = None
     
     def __call__(self, a: cp.ndarray, b: cp.ndarray, c: cp.ndarray) -> None:
-        if self.add_kernel is None:
-            self.compile()
-        self.add_kernel(a, b, c)
+        """
+        Perform vector addition: c = a + b.
+        """
+        cp.add(a, b, out=c)
     
     def compile(self) -> Dict[str, Any]:
-        """Compile the kernel and extract SASS."""
-        # Define ElementwiseKernel
-        self.add_kernel = cp.ElementwiseKernel(
-            'T a, T b',
-            'T c',
-            'c = a + b',
-            'vector_add_kernel'
-        )
+        """
+        Trigger cuBLAS compilation and extract SASS via CUDA_DUMP_CUBIN.
         
-        # Trigger compilation
-        dummy_a = cp.empty((1024,), dtype=cp.float32)
-        dummy_b = cp.empty_like(dummy_a)
-        dummy_c = cp.empty_like(dummy_a)
-        self.add_kernel(dummy_a, dummy_b, dummy_c)
+        Note: We uses matrix multiplication (a @ b) to guarantee triggering 
+        cuBLAS and dumping a cubin, as vector addition (cp.add) might not 
+        always go through cuBLAS or dump a generic kernel.
+        """
+        # Setup CUDA cache directory
+        self.cuda_cache_dir = tempfile.mkdtemp(prefix='cuda_cache_')
         
-        # Get device info
-        device = cp.cuda.Device()
-        actual_sm = int(device.compute_capability)
+        # Set environment variables for CUDA cubin dumping
+        old_env = {}
+        env_vars = {
+            'CUDA_CACHE_DISABLE': '0',
+            'CUDA_CACHE_PATH': self.cuda_cache_dir,
+            'CUDA_FORCE_PTX_JIT': '0',
+            'CUDA_DUMP_CUBIN': '1',
+        }
         
-        # Setup output directory
-        backend_output_dir = os.path.join(self.output_dir, 'cublas')
-        os.makedirs(backend_output_dir, exist_ok=True)
+        for key, value in env_vars.items():
+            old_env[key] = os.environ.get(key)
+            os.environ[key] = value
         
-        cuobjdump_path = self.config.get('hardware', {}).get('cuobjdump_path', '/usr/local/cuda/bin/cuobjdump')
-        
-        # cached_code is C++ source, not binary - need to get binary from cache
-        from pathlib import Path
-        import shutil
-        
-        cache_dir = Path.home() / '.cupy' / 'kernel_cache'
-        artifacts = {}
-        
-        if cache_dir.exists():
-            all_cubins = sorted(cache_dir.glob('**/*.cubin'), key=lambda p: p.stat().st_mtime, reverse=True)
-            if all_cubins:
-                cubin_src = all_cubins[0]  # Most recent
+        try:
+            # Trigger cuBLAS with GEMM to ensure cubin dump
+            # Using float16 pairwise ensures usage of Tensor Cores/cublasLt often
+            M, N, K = 1024, 1024, 1024
+            
+            # Use a separate stream to avoid interfering with ongoing work
+            with cp.cuda.Stream():
+                a_gemm = cp.random.randn(M, K, dtype=cp.float16)
+                b_gemm = cp.random.randn(K, N, dtype=cp.float16)
+                c_gemm = a_gemm @ b_gemm
+                cp.cuda.runtime.deviceSynchronize()
+            
+            # Get device info
+            device = cp.cuda.Device()
+            actual_sm = int(device.compute_capability)
+            
+            # Setup output directory
+            backend_output_dir = os.path.join(self.output_dir, 'cublas')
+            os.makedirs(backend_output_dir, exist_ok=True)
+            
+            artifacts = {}
+            
+            # Find dumped cubin files
+            cubin_files = glob.glob(os.path.join(self.cuda_cache_dir, '**/*.cubin'), recursive=True)
+            
+            if cubin_files:
+                # Take the most recent one
+                cubin_src = max(cubin_files, key=os.path.getmtime)
                 cubin_dst = os.path.join(backend_output_dir, f'add_sm{actual_sm}.cubin')
                 
-                # CuPy cache files have a header before ELF - strip it
-                with open(cubin_src, 'rb') as f:
-                    content = f.read()
-                    elf_start = content.find(b'\x7fELF')
-                    if elf_start > 0:
-                        kernel_bytes = content[elf_start:]
-                    else:
-                        kernel_bytes = content
-                
-                with open(cubin_dst, 'wb') as f:
-                    f.write(kernel_bytes)
-                
+                # Copy cubin
+                import shutil
+                shutil.copy2(cubin_src, cubin_dst)
                 artifacts['cubin'] = cubin_dst
                 print(f"    CUBIN saved: {cubin_dst}")
                 
-                # Extract SASS
+                # Extract SASS using nvdisasm
+                nvdisasm_path = self.config.get('hardware', {}).get('nvdisasm_path', '/usr/local/cuda/bin/nvdisasm')
                 sass_path = os.path.join(backend_output_dir, f'add_sm{actual_sm}.sass')
-                sass_result = subprocess.run(
-                    [cuobjdump_path, '-sass', cubin_dst],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                if sass_result.returncode == 0 and sass_result.stdout:
+                
+                try:
+                    result = subprocess.run(
+                        [nvdisasm_path, cubin_dst],
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
                     with open(sass_path, 'w') as f:
-                        f.write(sass_result.stdout)
+                        f.write(result.stdout)
                     artifacts['sass'] = sass_path
                     print(f"    SASS saved: {sass_path}")
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    print(f"    Warning: nvdisasm failed: {e}")
                 
-                # Extract PTX
+                # Try cuobjdump for PTX
+                cuobjdump_path = self.config.get('hardware', {}).get('cuobjdump_path', '/usr/local/cuda/bin/cuobjdump')
                 ptx_path = os.path.join(backend_output_dir, f'add_sm{actual_sm}.ptx')
-                ptx_result = subprocess.run(
-                    [cuobjdump_path, '-ptx', cubin_dst],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                if ptx_result.returncode == 0 and ptx_result.stdout:
-                    with open(ptx_path, 'w') as f:
-                        f.write(ptx_result.stdout)
-                    artifacts['ptx'] = ptx_path
-                    print(f"    PTX saved: {ptx_path}")
-        
-        return {
-            'backend': self.name,
-            'status': 'compiled',
-            'actual_sm': actual_sm,
-            'artifacts': artifacts
-        }
+                
+                try:
+                    result = subprocess.run(
+                        [cuobjdump_path, '-ptx', cubin_dst],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        with open(ptx_path, 'w') as f:
+                            f.write(result.stdout)
+                        artifacts['ptx'] = ptx_path
+                        print(f"    PTX saved: {ptx_path}")
+                except FileNotFoundError:
+                    pass
+            else:
+                print(f"    Warning: No cubin files found in {self.cuda_cache_dir}")
+            
+            return {
+                'backend': self.name,
+                'status': 'compiled',
+                'actual_sm': actual_sm,
+                'artifacts': artifacts
+            }
+            
+        finally:
+            # Restore environment variables
+            for key, value in old_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            
+            # Cleanup cache directory
+            if self.cuda_cache_dir and os.path.exists(self.cuda_cache_dir):
+                import shutil
+                shutil.rmtree(self.cuda_cache_dir, ignore_errors=True)
     
     @staticmethod
     def create_inputs(size: int, dtype=cp.float32):

@@ -100,6 +100,11 @@ def run_tests(
     
     if compile_only:
         pytest_args.extend(['-k', 'compile'])
+    else:
+        # Check for name filter in config (like pytest -k)
+        name_filter = test_config.get('name_filter')
+        if name_filter:
+            pytest_args.extend(['-k', name_filter])
     
     if extra_pytest_args:
         pytest_args.extend(extra_pytest_args)

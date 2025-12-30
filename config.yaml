@@ -5,7 +5,7 @@
 hardware:
   # Options: "native" (Blackwell sm_100) or "compile_only" (non-Blackwell, e.g. RTX 3060)
   # In compile_only mode, kernels compile for sm_100 but skip execution
-  hardware_mode: compile_only
+  hardware_mode: native
   
   # Target SM architecture for compilation
   target_sm: 100
@@ -25,17 +25,21 @@ kernels:
     backends:
       - triton
       - cutile
-      #- pytorch
-      #- cublas
+      - pytorch
+      - cublas
     # Tile/block size for kernel execution
     tile_size: 16
 
 # Test configurations
 tests:
   enabled: true
+  # Filter tests by name pattern (like pytest -k). Set to null or "" to run all tests.
+  # Examples: "random", "float32", "compile", "correctness"
+  name_filter: null
+  #name_filter: random
   # Which backends to test
   backends:
-    - triton
+    #- triton
     - cutile
     #- pytorch
     #- cublas
@@ -57,7 +61,7 @@ benchmarks:
   backends:
     - triton
     - cutile
-    - pytorch
+    #- pytorch
     #- cublas
   # Input sizes for benchmarks
   sizes:
@@ -66,9 +70,11 @@ benchmarks:
     - 1048576
     - 4194304
   # Warmup iterations before timing
-  warmup_iterations: 10
+  #warmup_iterations: 10
+  warmup_iterations: 5
   # Number of benchmark iterations
-  benchmark_iterations: 100
+  #benchmark_iterations: 100
+  benchmark_iterations: 20
   # Metrics to compute
   metrics:
     - latency_us

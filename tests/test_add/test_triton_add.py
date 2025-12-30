@@ -20,6 +20,12 @@ def load_config():
     return {}
 
 
+# Load config at module level for parametrization
+_CONFIG = load_config()
+_TEST_SIZES = _CONFIG.get('tests', {}).get('sizes', [1024, 4096, 16384, 65536])
+_TEST_SIZES_FP16 = [s for s in _TEST_SIZES if s <= 16384]  # Limit fp16 sizes
+
+
 class TestTritonAdd:
     """Test suite for Triton vector addition."""
     
@@ -38,7 +44,7 @@ class TestTritonAdd:
         """Check if in compile-only mode."""
         return config.get('hardware', {}).get('hardware_mode', 'native') == 'compile_only'
     
-    @pytest.mark.parametrize("size", [1024, 4096, 16384, 65536])
+    @pytest.mark.parametrize("size", _TEST_SIZES)
     def test_correctness_float32(self, kernel, is_compile_only, size):
         """Test correctness with float32 inputs."""
         if is_compile_only:
@@ -55,7 +61,7 @@ class TestTritonAdd:
         
         torch.testing.assert_close(c, expected, rtol=1e-5, atol=1e-5)
     
-    @pytest.mark.parametrize("size", [1024, 4096, 16384])
+    @pytest.mark.parametrize("size", _TEST_SIZES_FP16)
     def test_correctness_float16(self, kernel, is_compile_only, size):
         """Test correctness with float16 inputs."""
         if is_compile_only:
