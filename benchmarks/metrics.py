@@ -13,17 +13,21 @@ from dataclasses import dataclass
 class BenchmarkResult:
     """Container for benchmark results."""
     backend: str
-    size: int
+    size: int  # For add kernel, or M*N for matmul
     dtype: str
     latency_us: float  # Microseconds
     latency_std_us: float
     tflops: float
     memory_bandwidth_gbps: float
     iterations: int
+    # For matmul: store actual dimensions
+    m: int = None
+    n: int = None
+    k: int = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             'backend': self.backend,
             'size': self.size,
             'dtype': self.dtype,
@@ -33,6 +37,17 @@ class BenchmarkResult:
             'memory_bandwidth_gbps': self.memory_bandwidth_gbps,
             'iterations': self.iterations
         }
+        if self.m is not None:
+            result['m'] = self.m
+            result['n'] = self.n
+            result['k'] = self.k
+        return result
+    
+    def get_size_display(self) -> str:
+        """Get human-readable size string."""
+        if self.m is not None:
+            return f"{self.m}x{self.n}x{self.k}"
+        return str(self.size)
 
 
 def compute_latency(
@@ -396,6 +411,9 @@ def benchmark_matmul_kernel(
         latency_std_us=std_us,
         tflops=tflops,
         memory_bandwidth_gbps=bandwidth,
-        iterations=benchmark_iterations
+        iterations=benchmark_iterations,
+        m=m,
+        n=n,
+        k=k
     )
 

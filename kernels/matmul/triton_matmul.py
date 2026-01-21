@@ -157,9 +157,12 @@ class TritonMatmul:
             BLOCK_K=BLOCK_K,
         )
     
-    def compile(self) -> Dict[str, Any]:
+    def compile(self, visualize: bool = False) -> Dict[str, Any]:
         """
         Compile the kernel for sm_100 (AOT compilation).
+        
+        Args:
+            visualize: If True, also generate dependency graph visualization
         
         Returns:
             Dict with compilation artifacts
@@ -183,17 +186,23 @@ class TritonMatmul:
             "stride_cn": "i32",
         }
         
+        # Use 32x32x32 block sizes for standardized comparison with other backends
+        # This is the minimum compatible size for tl.dot (requires >= 16)
         src = tc.ASTSource(
             fn=_matmul_kernel,
-            constexprs={"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 32, "GROUP_SIZE_M": 8},
+            constexprs={"BLOCK_M": 32, "BLOCK_N": 32, "BLOCK_K": 32, "GROUP_SIZE_M": 8},
             signature=signature
         )
         
         target = GPUTarget("cuda", self.target_sm, 64)
         compiled_result = triton.compile(src, target=target)
         asm = compiled_result.asm
-        
         self._compiled = asm
+        
+        # Get matrix dimensions from config for filename (default: 8192x8192x8192)
+        compile_dims = self.config.get('kernels', {}).get('matmul', {}).get('compile_dims', [8192, 8192, 8192])
+        m, n, k = compile_dims[0], compile_dims[1], compile_dims[2]
+        dim_suffix = f"_{m}x{n}x{k}"
         
         artifacts = {}
         
@@ -203,20 +212,20 @@ class TritonMatmul:
         
         # Save PTX
         if 'ptx' in asm:
-            ptx_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}.ptx")
+            ptx_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}{dim_suffix}.ptx")
             with open(ptx_path, 'w') as f:
                 f.write(asm['ptx'])
             artifacts['ptx'] = ptx_path
         
         # Save CUBIN
         if 'cubin' in asm:
-            cubin_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}.cubin")
+            cubin_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}{dim_suffix}.cubin")
             with open(cubin_path, 'wb') as f:
                 f.write(asm['cubin'])
             artifacts['cubin'] = cubin_path
             
             # Extract SASS
-            sass_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}.sass")
+            sass_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}{dim_suffix}.sass")
             cuobjdump_path = self.config.get('hardware', {}).get('cuobjdump_path', '/usr/local/cuda/bin/cuobjdump')
             
             try:
@@ -231,6 +240,32 @@ class TritonMatmul:
                 print(f"    SASS extracted: {sass_path}")
             except (subprocess.CalledProcessError, FileNotFoundError):
                 pass
+        
+        # Save TTIR (Triton IR)
+        if 'ttir' in asm:
+            ttir_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}{dim_suffix}_ttir.txt")
+            with open(ttir_path, 'w') as f:
+                print(asm['ttir'], file=f)
+            artifacts['ttir'] = ttir_path
+            print(f"    TTIR saved: {ttir_path}")
+        
+        # Save TTGIR (Triton GPU IR)
+        if 'ttgir' in asm:
+            ttgir_path = os.path.join(backend_output_dir, f"matmul_sm{self.target_sm}{dim_suffix}_ttgir.txt")
+            with open(ttgir_path, 'w') as f:
+                print(asm['ttgir'], file=f)
+            artifacts['ttgir'] = ttgir_path
+            print(f"    TTGIR saved: {ttgir_path}")
+            
+            # Generate dependency graph visualization if requested
+            if visualize:
+                try:
+                    from analysis.ttgir_visualizer import visualize_ttgir
+                    html_path = visualize_ttgir(asm['ttgir'], backend_output_dir)
+                    artifacts['visualization'] = html_path
+                    print(f"    Visualization: {html_path}")
+                except Exception as e:
+                    print(f"    Warning: Could not generate visualization: {e}")
         
         return {
             'backend': self.name,

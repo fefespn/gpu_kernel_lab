@@ -1,0 +1,15 @@
+triton_cutile/
+├── README.md                         # Thesis explanation + 4 challenges
+├── experiments/
+│   ├── 01_cooperative_warps/         # Challenge 1: Multi-warp TC ops
+│   │   ├── triton_gemm_large.py      # Large TC GEMM hitting warp limitations
+│   │   └── cutile_gemm_large.py      # CuTile equivalent
+│   ├── 02_register_pressure/         # Challenge 2: Register spilling
+│   │   ├── triton_deep_pipeline.py   # Deep modulo schedule → >255 regs
+│   │   └── cutile_deep_pipeline.py   # CuTile with explicit reg management
+│   ├── 03_variable_latency/          # Challenge 3: TMA latency variance
+│   │   ├── triton_tma_sync.py        # TMA transfers with fixed wait
+│   │   └── cutile_tma_async.py       # CuTile async TMA handling
+│   └── 04_blocking_sync/             # Challenge 4: GEMM.WAIT blocks EXP
+│       ├── triton_fused_gemm_exp.py  # Fused kernel hitting the wall
+│       └── cutile_fused_gemm_exp.py  # CuTile distributing across warps

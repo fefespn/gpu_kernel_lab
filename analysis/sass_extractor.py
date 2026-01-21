@@ -1,6 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """
 SASS extraction from Triton and cuTile compiled kernels.
+
+# Compare add kernel (default)
+python compare_sass.py --backends triton cutile
+
+# Compare matmul kernel
+python compare_sass.py --kernel matmul --backends triton cutile
+
+# Compare ALL kernels (add + matmul)
+python compare_sass.py --kernel all --backends triton cutile
+
+# Extract only, no comparison
+python compare_sass.py --kernel all --extract-only
 """
 
 import os
@@ -46,20 +58,24 @@ class SassExtractor:
         Extract SASS from Triton kernel.
         
         Args:
-            kernel_name: Name of the kernel to extract
+            kernel_name: Name of the kernel to extract ('add' or 'matmul')
             
         Returns:
             SassArtifacts with paths to extracted files
         """
-        from kernels.add.triton_add import TritonAdd
+        # Dynamically import the correct kernel based on kernel_name
+        if kernel_name == 'matmul':
+            from kernels.matmul.triton_matmul import TritonMatmul
+            kernel = TritonMatmul(self.config)
+            backend_output_dir = os.path.join(self.output_dir, 'triton_matmul')
+        else:
+            from kernels.add.triton_add import TritonAdd
+            kernel = TritonAdd(self.config)
+            backend_output_dir = os.path.join(self.output_dir, 'triton')
         
-        kernel = TritonAdd(self.config)
         result = kernel.compile()
         
         artifacts = SassArtifacts(backend='triton', kernel_name=kernel_name)
-        
-        # Backend-specific output directory
-        backend_output_dir = os.path.join(self.output_dir, 'triton')
         
         if 'ptx' in result['artifacts']:
             artifacts.ptx_path = result['artifacts']['ptx']
@@ -90,8 +106,8 @@ class SassExtractor:
                 except (subprocess.CalledProcessError, FileNotFoundError) as e:
                     print(f"Error extracting SASS: {e}")
             
-            # Python-based extraction as last fallback
-            if not artifacts.sass_content:
+            # Python-based extraction as last fallback (only for add kernel)
+            if not artifacts.sass_content and kernel_name == 'add':
                 sass_code = kernel.get_sass()
                 if sass_code:
                     artifacts.sass_content = sass_code
@@ -106,20 +122,24 @@ class SassExtractor:
         Extract SASS from cuTile kernel.
         
         Args:
-            kernel_name: Name of the kernel to extract
+            kernel_name: Name of the kernel to extract ('add' or 'matmul')
             
         Returns:
             SassArtifacts with paths to extracted files
         """
-        from kernels.add.cutile_add import CutileAdd
+        # Dynamically import the correct kernel based on kernel_name
+        if kernel_name == 'matmul':
+            from kernels.matmul.cutile_matmul import CutileMatmul
+            kernel = CutileMatmul(self.config)
+            backend_output_dir = os.path.join(self.output_dir, 'cutile_matmul')
+        else:
+            from kernels.add.cutile_add import CutileAdd
+            kernel = CutileAdd(self.config)
+            backend_output_dir = os.path.join(self.output_dir, 'cutile')
         
-        kernel = CutileAdd(self.config)
         result = kernel.compile()
         
         artifacts = SassArtifacts(backend='cutile', kernel_name=kernel_name)
-        
-        # Backend-specific output directory
-        backend_output_dir = os.path.join(self.output_dir, 'cutile')
         
         if 'ptx' in result['artifacts']:
             artifacts.ptx_path = result['artifacts']['ptx']

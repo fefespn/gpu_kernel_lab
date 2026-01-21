@@ -146,17 +146,17 @@ SASS comparison is a separate step that doesn't require benchmark execution.
 This is useful on non-Blackwell GPUs where you can compile but not run.
 
 ```bash
-# Compare SASS between triton and cutile (default)
-python compare_sass.py
-
-# Specify backends to compare
+# Compare add kernel (default)
 python compare_sass.py --backends triton cutile
 
-# Extract SASS only (no comparison)
-python compare_sass.py --extract-only
+# Compare matmul kernel
+python compare_sass.py --kernel matmul --backends triton cutile
 
-# Verbose output with SASS line counts
-python compare_sass.py --verbose
+# Compare ALL kernels (add + matmul)
+python compare_sass.py --kernel all --backends triton cutile
+
+# Extract only, no comparison
+python compare_sass.py --kernel all --extract-only
 ```
 
 ### Run on Modal.com (B200 GPUs)
@@ -165,7 +165,7 @@ For running on cloud B200 GPUs via Modal:
 
 ```bash
 # Install Modal
-pip install modal
+pip install modalbvn fhmjgc,,,,
 modal token new  # Authenticate if needed
 
 # Run specific test on B200

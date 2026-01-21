@@ -3,21 +3,25 @@
 Modal.com deployment for running GPU Kernel Lab tests on B200 GPUs.
 
 Usage:
-    # Run the add kernel test
-    modal run run_modal.py --test-path tests/test_add/test_cutile_add.py
+    # Run tests
+    modal run run_modal.py --tests
 
-    # Run all tests
-    modal run run_modal.py
+    # Run benchmarks
+    modal run run_modal.py --benchmark
 
-    # Deploy as a persistent service
-    modal deploy run_modal.py
+    # Run SASS analysis
+    modal run run_modal.py --sass
+
+    # With custom config
+    modal run run_modal.py --tests --config custom.yaml
+
 """
 
 import modal
 import os
 
 # Create the Modal app
-app = modal.App("gpu-kernel-lab")
+app = modal.App("gpu-kernel-lab-same-tile-strategy")
 
 # Define the CUDA image with all dependencies
 # Using CUDA 13.1 for Blackwell (sm_100) support
@@ -67,13 +71,12 @@ cuda_image = (
     image=cuda_image,
     timeout=600,  # 10 minutes
 )
-def run_tests(test_path: str = None, verbose: bool = True):
+def run_tests(config_path: str = "config.yaml"):
     """
-    Run GPU kernel tests on B200.
+    Run GPU kernel tests on B200 for all enabled kernels in config.
 
     Args:
-        test_path: Specific test file or directory to run (relative to project root)
-        verbose: Enable verbose output
+        config_path: Path to config file (default: config.yaml)
 
     Returns:
         Dict with test results
@@ -85,26 +88,19 @@ def run_tests(test_path: str = None, verbose: bool = True):
 
     # Update config to use native mode (we're on B200!)
     import yaml
-    config_path = "/app/config.yaml"
-    with open(config_path, 'r') as f:
+    full_config_path = f"/app/{config_path}"
+    with open(full_config_path, 'r') as f:
         config = yaml.safe_load(f)
 
     # Ensure native mode for B200
     config['hardware']['hardware_mode'] = 'native'
     config['hardware']['target_sm'] = 100  # Blackwell
 
-    with open(config_path, 'w') as f:
+    with open(full_config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
 
-    # Use run_tests.py which respects config.yaml (including name_filter)
-    cmd = ["python", "run_tests.py"]
-
-    if not verbose:
-        cmd.append("--quiet")
-
-    # If specific test path, pass extra pytest args
-    if test_path:
-        cmd.extend(["--", test_path])
+    # Use run_tests.py which runs all enabled kernels from config
+    cmd = ["python", "run_tests.py", "--config", config_path]
 
     print(f"Running: {' '.join(cmd)}")
     print("-" * 60)
@@ -131,16 +127,14 @@ def run_tests(test_path: str = None, verbose: bool = True):
 @app.function(
     gpu="B200",
     image=cuda_image,
-    timeout=600,
+    timeout=1800,  # 30 minutes for larger benchmark suites
 )
-def run_benchmarks(config_path: str = "config.yaml", backend: str = None, sizes: list = None):
+def run_benchmarks(config_path: str = "config.yaml"):
     """
-    Run GPU kernel benchmarks on B200.
+    Run GPU kernel benchmarks on B200 for all enabled kernels in config.
 
     Args:
         config_path: Path to config file (default: config.yaml)
-        backend: Specific backend to benchmark (triton, cutile, pytorch, cublas)
-        sizes: List of sizes to benchmark
 
     Returns:
         Dict with benchmark results
@@ -163,16 +157,8 @@ def run_benchmarks(config_path: str = "config.yaml", backend: str = None, sizes:
     with open(full_config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
 
-    # Use run_benchmarks.py which respects config
+    # Use run_benchmarks.py which runs all enabled kernels from config
     cmd = ["python", "run_benchmarks.py", "--config", config_path]
-
-    # Override backend if specified via CLI
-    if backend:
-        cmd.extend(["--backend", backend])
-
-    # Override sizes if specified
-    if sizes:
-        cmd.extend(["--sizes", ",".join(map(str, sizes))])
 
     print(f"Running: {' '.join(cmd)}")
     print("-" * 60)
@@ -237,21 +223,19 @@ def run_sass_analysis():
 
 @app.local_entrypoint()
 def main(
-    test_path: str = None,
+    tests: bool = False,
     benchmark: bool = False,
     sass: bool = False,
-    config: str = "config.yaml",
-    verbose: bool = True
+    config: str = "config.yaml"
 ):
     """
     Main entrypoint for Modal CLI.
 
     Args:
-        test_path: Specific test file to run
-        benchmark: Run benchmarks instead of tests
+        tests: Run tests (all enabled kernels from config)
+        benchmark: Run benchmarks (all enabled kernels from config)
         sass: Run SASS analysis
-        config: Path to config file (for benchmarks)
-        verbose: Verbose output
+        config: Path to config file (controls which kernels are enabled)
     """
     print("=" * 60)
     print("GPU Kernel Lab - Running on Modal B200")
@@ -261,11 +245,19 @@ def main(
         print("\n📊 Running SASS analysis...")
         result = run_sass_analysis.remote()
     elif benchmark:
-        print(f"\n⚡ Running benchmarks with config: {config}")
+        print(f"\n⚡ Running benchmarks (all enabled kernels from {config})")
         result = run_benchmarks.remote(config_path=config)
+    elif tests:
+        print(f"\n🧪 Running tests (all enabled kernels from {config})")
+        result = run_tests.remote(config_path=config)
     else:
-        print(f"\n🧪 Running tests: {test_path or 'all tests'}")
-        result = run_tests.remote(test_path=test_path, verbose=verbose)
+        print("\n❌ Please specify --tests, --benchmark, or --sass")
+        print("\nUsage:")
+        print("  modal run run_modal.py --tests              # Run tests")
+        print("  modal run run_modal.py --benchmark          # Run benchmarks")
+        print("  modal run run_modal.py --sass               # Run SASS analysis")
+        print("  modal run run_modal.py --tests --config custom.yaml")
+        return {"success": False, "returncode": 1, "stdout": "", "stderr": "No action specified"}
 
     print("\n" + "=" * 60)
     if result["success"]:

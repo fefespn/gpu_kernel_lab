@@ -130,7 +130,6 @@ class BenchmarkRunner:
                         if self.kernel == 'matmul':
                             # size is [M, N, K]
                             m, n, k = size if isinstance(size, (list, tuple)) else (size, size, size)
-                            print(f"Benchmarking {backend} | size={m}x{n}x{k} | dtype={dtype}...", end=" ")
                             
                             result = benchmark_matmul_kernel(
                                 kernel,
@@ -140,8 +139,6 @@ class BenchmarkRunner:
                                 benchmark_iterations=iterations
                             )
                         else:
-                            print(f"Benchmarking {backend} | size={size} | dtype={dtype}...", end=" ")
-                            
                             result = benchmark_kernel(
                                 kernel,
                                 size=size,
@@ -152,12 +149,9 @@ class BenchmarkRunner:
                         
                         self.results.append(result)
                         
-                        print(f"latency={result.latency_us:.2f}µs, "
-                              f"TFLOPS={result.tflops:.6f}, "
-                              f"BW={result.memory_bandwidth_gbps:.2f} GB/s")
-                        
                     except Exception as e:
-                        print(f"Error: {e}")
+                        size_str = f"{m}x{n}x{k}" if self.kernel == 'matmul' else str(size)
+                        print(f"Error benchmarking {backend} | {size_str}: {e}")
         
         return self.results
     
@@ -222,21 +216,138 @@ class BenchmarkRunner:
         return filepath
     
     def print_summary(self):
-        """Print a summary table of results."""
+        """Print a summary table of results, grouped by size for easy comparison."""
         if not self.results:
             print("No results to display")
             return
         
-        print("\n" + "=" * 80)
+        # Check if we have matmul results (have m, n, k)
+        is_matmul = any(r.m is not None for r in self.results)
+        
+        # Sort by (m, n, k, dtype, backend) for matmul, or (size, dtype, backend) for add
+        if is_matmul:
+            sorted_results = sorted(self.results, key=lambda r: (r.m or 0, r.n or 0, r.k or 0, r.dtype, r.backend))
+        else:
+            sorted_results = sorted(self.results, key=lambda r: (r.size, r.dtype, r.backend))
+        
+        print("\n" + "=" * 85)
         print("BENCHMARK SUMMARY")
-        print("=" * 80)
-        print(f"{'Backend':<10} {'Size':>10} {'Dtype':<8} {'Latency (µs)':>14} "
-              f"{'TFLOPS':>10} {'BW (GB/s)':>12}")
-        print("-" * 80)
+        print("=" * 85)
+        
+        if is_matmul:
+            print(f"{'Backend':<10} {'M':>6} {'N':>6} {'K':>6} {'Dtype':<8} {'Latency (µs)':>14} "
+                  f"{'TFLOPS':>10} {'BW (GB/s)':>12}")
+        else:
+            print(f"{'Backend':<10} {'Size':>12} {'Dtype':<8} {'Latency (µs)':>14} "
+                  f"{'TFLOPS':>10} {'BW (GB/s)':>12}")
+        print("-" * 85)
+        
+        # Track current group for separators
+        current_key = None
+        for r in sorted_results:
+            # Determine group key
+            if is_matmul:
+                group_key = (r.m, r.n, r.k, r.dtype)
+            else:
+                group_key = (r.size, r.dtype)
+            
+            # Add separator between different groups for readability
+            if current_key is not None and group_key != current_key:
+                print("-" * 85)
+            current_key = group_key
+            
+            if is_matmul:
+                print(f"{r.backend:<10} {r.m:>6} {r.n:>6} {r.k:>6} {r.dtype:<8} "
+                      f"{r.latency_us:>14.2f} {r.tflops:>10.4f} "
+                      f"{r.memory_bandwidth_gbps:>12.2f}")
+            else:
+                print(f"{r.backend:<10} {r.size:>12} {r.dtype:<8} "
+                      f"{r.latency_us:>14.2f} {r.tflops:>10.6f} "
+                      f"{r.memory_bandwidth_gbps:>12.2f}")
+        
+        print("=" * 85)
+        
+        # Print comparison analysis vs PyTorch baseline
+        self._print_comparison_analysis(is_matmul)
+    
+    def _print_comparison_analysis(self, is_matmul: bool):
+        """Print comparison analysis between all backends."""
+        # Group results by test case (m,n,k,dtype for matmul, size,dtype for add)
+        from collections import defaultdict
+        
+        test_cases = defaultdict(dict)  # {test_key: {backend: result}}
+        all_backends = set()
         
         for r in self.results:
-            print(f"{r.backend:<10} {r.size:>10} {r.dtype:<8} "
-                  f"{r.latency_us:>14.2f} {r.tflops:>10.6f} "
-                  f"{r.memory_bandwidth_gbps:>12.2f}")
+            if is_matmul:
+                key = (r.m, r.n, r.k, r.dtype)
+            else:
+                key = (r.size, r.dtype)
+            test_cases[key][r.backend] = r
+            all_backends.add(r.backend)
         
-        print("=" * 80)
+        if len(all_backends) < 2:
+            return
+        
+        # Compute pairwise stats
+        pairwise_stats = defaultdict(lambda: defaultdict(lambda: {'wins': 0, 'losses': 0, 'speedups': []}))
+        
+        for key, backends in test_cases.items():
+            backend_list = list(backends.keys())
+            for i, b1 in enumerate(backend_list):
+                for b2 in backend_list[i+1:]:
+                    lat1 = backends[b1].latency_us
+                    lat2 = backends[b2].latency_us
+                    
+                    # b1 stats vs b2
+                    speedup1 = lat2 / lat1  # >1 means b1 is faster
+                    pairwise_stats[b1][b2]['speedups'].append(speedup1)
+                    if lat1 < lat2:
+                        pairwise_stats[b1][b2]['wins'] += 1
+                    else:
+                        pairwise_stats[b1][b2]['losses'] += 1
+                    
+                    # b2 stats vs b1
+                    speedup2 = lat1 / lat2  # >1 means b2 is faster
+                    pairwise_stats[b2][b1]['speedups'].append(speedup2)
+                    if lat2 < lat1:
+                        pairwise_stats[b2][b1]['wins'] += 1
+                    else:
+                        pairwise_stats[b2][b1]['losses'] += 1
+        
+        # Print pairwise comparison table
+        print("\n" + "=" * 85)
+        print("HEAD-TO-HEAD COMPARISON")
+        print("=" * 85)
+        print(f"{'Backend A':<12} {'vs':<4} {'Backend B':<12} {'Avg Speedup':>12} {'Wins':>6} {'Losses':>8} {'Win Rate':>10}")
+        print("-" * 85)
+        
+        # Sort backends for consistent output
+        sorted_backends = sorted(all_backends)
+        
+        for b1 in sorted_backends:
+            for b2 in sorted_backends:
+                if b1 >= b2:  # Skip self and duplicates (only show A vs B, not B vs A)
+                    continue
+                
+                stats = pairwise_stats[b1][b2]
+                speedups = stats['speedups']
+                if not speedups:
+                    continue
+                    
+                avg_speedup = sum(speedups) / len(speedups)
+                wins = stats['wins']
+                losses = stats['losses']
+                total = wins + losses
+                win_rate = (wins / total * 100) if total > 0 else 0
+                
+                speedup_str = f"{avg_speedup:.2f}x"
+                if avg_speedup > 1:
+                    speedup_str = f"🚀 {speedup_str}"
+                else:
+                    speedup_str = f"🐢 {speedup_str}"
+                
+                print(f"{b1:<12} {'vs':<4} {b2:<12} {speedup_str:>12} {wins:>6} {losses:>8} {win_rate:>9.1f}%")
+        
+        print("=" * 85)
+        print("Note: Speedup > 1.0 means Backend A is faster than Backend B")

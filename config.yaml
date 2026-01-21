@@ -5,7 +5,7 @@
 hardware:
   # Options: "native" (Blackwell sm_100) or "compile_only" (non-Blackwell, e.g. RTX 3060)
   # In compile_only mode, kernels compile for sm_100 but skip execution
-  hardware_mode: native
+  hardware_mode: compile_only
   
   # Target SM architecture for compilation
   target_sm: 100
@@ -20,11 +20,11 @@ output_dir: outputs
 # Kernel configurations
 kernels:
   add:
-    enabled: true
+    enabled: false
     # Available backends: cublas, triton, cutile, pytorch
     backends:
       - triton
-     # - cutile
+      - cutile
       - pytorch
      # - cublas
     # Tile/block size for kernel execution
@@ -35,12 +35,14 @@ kernels:
     # Available backends: triton, cutile, pytorch
     backends:
       - triton
-    #  - cutile
+      - cutile
       - pytorch
+    # Matrix dimensions for IR compilation/extraction (M, N, K)
+    compile_dims: [8192, 8192, 128]
 
 # Test configurations for vector add
 tests:
-  enabled: true
+  enabled: false
   # Filter tests by name pattern (like pytest -k). Set to null or "" to run all tests.
   # Examples: "random", "float32", "compile", "correctness"
   #name_filter: compile
@@ -70,20 +72,20 @@ tests_matmul:
   # Which backends to test
   backends:
     - triton
-  #  - cutile
-    - pytorch
+    - cutile
+    #- pytorch
   # Matrix dimensions - all combinations of M × N × K will be tested
-  M: [64, 128]
-  N: [128, 256]
-  K: [256, 512]
+  M: [8192] #[64, 128]
+  N: [8192] #[128, 256]
+  K: [8192] #[256, 512]
   # Data types to test
   dtypes:
     - float32
-    - float16
+    #- float16
 
 # Benchmark configurations for vector add
 benchmarks:
-  enabled: true
+  enabled: false
   # Which backends to benchmark
   backends:
     - triton
@@ -114,12 +116,20 @@ benchmarks_matmul:
   # Which backends to benchmark
   backends:
     - triton
-    #- cutile
+    - cutile
     - pytorch
   # Matrix dimensions - all combinations of M × N × K will be benchmarked
-  M: [1024, 2048]
-  N: [1024, 2048]
-  K: [1024, 2048]
+  #M: [64, 128, 256, 512, 1024] #[1024, 2048]
+  #N: [64, 128, 256, 512, 1024] #[1024, 2048]
+  #K: [64, 128, 256, 512, 1024] #[1024, 2048]
+  #M: [4096, 8192, 12288, 16384] #[1024, 2048]
+  #N: [4096, 8192, 12288, 16384] #[1024, 2048]
+  #K: [4096, 8192, 12288, 16384] #[1024, 2048]
+  M: [64,128,4096, 8192]
+  N: [64,128,4096, 8192]
+  K: [64,128,4096, 8192]
+  
+
   # Warmup iterations before timing
   warmup_iterations: 5
   # Number of benchmark iterations

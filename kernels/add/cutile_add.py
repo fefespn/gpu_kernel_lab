@@ -32,6 +32,9 @@ class CutileAdd:
     
     name = "cutile"
     
+    # Class-level kernel cache to avoid recompiling
+    _kernel_func = None
+    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize cuTile kernel.
@@ -45,7 +48,6 @@ class CutileAdd:
         self.tile_size = self.config.get('kernels', {}).get('add', {}).get('tile_size', 16)
         self.output_dir = self.config.get('output_dir', 'outputs')
         
-        self._kernel = None
         self._compiled = False
         self._ct = None
         self._cp = None
@@ -70,8 +72,9 @@ class CutileAdd:
             ct_compile.get_sm_arch = lambda: f'sm_{self.target_sm}'
     
     def _create_kernel(self):
-        """Create the cuTile kernel function."""
-        if self._kernel is not None:
+        """Create the cuTile kernel function (class-level, created once)."""
+        # Use class-level kernel function to avoid recreating it
+        if CutileAdd._kernel_func is not None:
             return
         
         self._import_and_patch()
@@ -92,7 +95,7 @@ class CutileAdd:
             # Store result
             ct.store(c, index=(pid,), tile=result)
         
-        self._kernel = cutile_vector_add
+        CutileAdd._kernel_func = cutile_vector_add
     
     def __call__(self, a, b, c) -> None:
         """
@@ -110,11 +113,11 @@ class CutileAdd:
         n_elements = a.size
         grid = (ct.cdiv(n_elements, self.tile_size), 1, 1)
         
-        # Note: compile_only mode handled in _import_and_patch, not here for benchmark accuracy
+        # Launch kernel using class-level cached kernel
         ct.launch(
             cp.cuda.get_current_stream(),
             grid,
-            self._kernel,
+            CutileAdd._kernel_func,
             (a, b, c, self.tile_size)
         )
     
@@ -144,7 +147,7 @@ class CutileAdd:
             ct.launch(
                 cp.cuda.get_current_stream(),
                 grid,
-                self._kernel,
+                CutileAdd._kernel_func,
                 (a, b, c, self.tile_size)
             )
             self._compiled = True
