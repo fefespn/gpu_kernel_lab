@@ -102,13 +102,58 @@ def run_experiment(experiment: str, compile_only: bool = False):
         print(result.stdout)
         results["analysis"] = {"output": result.stdout}
     
+    elif experiment == "01_cooperative_warps":
+        exp_dir = "experiments/01_cooperative_warps"
+        
+        # Run Triton kernel
+        print("\n" + "=" * 60)
+        print("Running Triton Large-Tile GEMM (128x128x64)...")
+        print("=" * 60)
+        
+        cmd = ["python", f"{exp_dir}/triton_large_tile.py", "--output-dir", "outputs"]
+        if compile_only:
+            cmd.append("--compile-only")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
+        results["triton"] = {"returncode": result.returncode, "output": result.stdout}
+        
+        # Run CuTile kernel
+        print("\n" + "=" * 60)
+        print("Running CuTile Large-Tile GEMM (128x128x64)...")
+        print("=" * 60)
+        
+        cmd = ["python", f"{exp_dir}/cutile_large_tile.py", "--output-dir", "outputs"]
+        if compile_only:
+            cmd.append("--compile-only")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
+        results["cutile"] = {"returncode": result.returncode, "output": result.stdout}
+        
+        # Run analysis
+        print("\n" + "=" * 60)
+        print("Running SASS Analysis for Cooperative Warps...")
+        print("=" * 60)
+        
+        result = subprocess.run(
+            ["python", f"{exp_dir}/analyze.py", "--output-dir", "outputs"],
+            capture_output=True, text=True
+        )
+        print(result.stdout)
+        results["analysis"] = {"output": result.stdout}
+    
     return results
 
 
 @app.function(gpu="B200", image=cuda_image, timeout=1800)
 def run_all_experiments(compile_only: bool = False):
     """Run all experiments."""
-    experiments = ["04_blocking_sync"]
+    experiments = ["01_cooperative_warps", "04_blocking_sync"]
     results = {}
     
     for exp in experiments:
@@ -121,7 +166,7 @@ def run_all_experiments(compile_only: bool = False):
 
 
 @app.function(gpu="B200", image=cuda_image, timeout=1800)
-def run_benchmarks(experiment: str = "04_blocking_sync", num_warmup: int = 10, num_runs: int = 100):
+def run_benchmarks(experiment: str = "04_blocking_sync", num_warmup: int = 5, num_runs: int = 20):
     """Run speed and accuracy benchmarks for an experiment."""
     import subprocess
     import os
@@ -203,6 +248,105 @@ def run_benchmarks(experiment: str = "04_blocking_sync", num_warmup: int = 10, n
             
             # Calculate TFLOPS (2*M*N*K for matmul + M*N for exp)
             flops = (2 * M * N * K + M * N) 
+            triton_tflops = flops / (triton_time / 1000) / 1e12
+            cutile_tflops = flops / (cutile_time / 1000) / 1e12
+            
+            speedup = triton_time / cutile_time
+            
+            print(f"  Triton: {triton_time:.3f} ms, {triton_tflops:.2f} TFLOPS, max_error={triton_error:.2e}")
+            print(f"  CuTile: {cutile_time:.3f} ms, {cutile_tflops:.2f} TFLOPS, max_error={cutile_error:.2e}")
+            print(f"  Speedup (CuTile/Triton): {speedup:.2f}x")
+            
+            results["benchmarks"].append({
+                "M": M, "K": K, "N": N,
+                "triton_ms": triton_time,
+                "cutile_ms": cutile_time,
+                "triton_tflops": triton_tflops,
+                "cutile_tflops": cutile_tflops,
+                "speedup": speedup,
+                "triton_error": triton_error,
+                "cutile_error": cutile_error,
+            })
+        
+        return results
+    
+    elif experiment == "01_cooperative_warps":
+        # Import kernels for large-tile GEMM
+        import sys
+        sys.path.insert(0, "/app/experiments/01_cooperative_warps")
+        from triton_large_tile import TritonLargeTileGemm
+        from cutile_large_tile import CutileLargeTileGemm
+        
+        results = {"experiment": experiment, "benchmarks": []}
+        
+        # Systematic test: varying which dimension is small
+        sizes = [
+            # Group 1: Small N (output width) - hypothesis: CuTile wins
+            (4096, 4096, 128),   # CuTile should win
+            (8192, 4096, 128),   # CuTile should win
+            (4096, 8192, 128),   # Large K, small N - CuTile should win
+            
+            # Group 2: Small K (inner dim) - hypothesis: Triton wins  
+            (4096, 128, 4096),   # Few GEMM iterations - Triton should win
+            (8192, 128, 4096),   # Few GEMM iterations - Triton should win
+            
+            # Group 3: Large K, moderate N - compare
+            (4096, 8192, 512),   # Many iterations, moderate output
+            (8192, 8192, 256),   # Many iterations, narrow output
+        ]
+        
+        for M, K, N in sizes:
+            print(f"\n[Matrix Size: {M}x{K}x{N} with 128x128x64 tiles]")
+            
+            # Create inputs (fp16 for tensor cores)
+            A, B, C_triton = TritonLargeTileGemm.create_inputs(M, N, K, device='cuda')
+            _, _, C_cutile = TritonLargeTileGemm.create_inputs(M, N, K, device='cuda')
+            
+            # Reference
+            reference = TritonLargeTileGemm.reference(A, B)
+            
+            # Triton benchmark
+            triton_kernel = TritonLargeTileGemm({'hardware_mode': 'native', 'output_dir': 'outputs'})
+            
+            # Warmup
+            for _ in range(num_warmup):
+                C_triton.zero_()
+                triton_kernel(A, B, C_triton)
+            torch.cuda.synchronize()
+            
+            # Timed runs
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            for _ in range(num_runs):
+                C_triton.zero_()
+                triton_kernel(A, B, C_triton)
+            torch.cuda.synchronize()
+            triton_time = (time.perf_counter() - start) / num_runs * 1000
+            
+            triton_error = (C_triton.float() - reference.float()).abs().max().item()
+            
+            # CuTile benchmark
+            cutile_kernel = CutileLargeTileGemm({'hardware_mode': 'native', 'output_dir': 'outputs'})
+            
+            # Warmup
+            for _ in range(num_warmup):
+                C_cutile.zero_()
+                cutile_kernel(A, B, C_cutile)
+            torch.cuda.synchronize()
+            
+            # Timed runs
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            for _ in range(num_runs):
+                C_cutile.zero_()
+                cutile_kernel(A, B, C_cutile)
+            torch.cuda.synchronize()
+            cutile_time = (time.perf_counter() - start) / num_runs * 1000
+            
+            cutile_error = (C_cutile.float() - reference.float()).abs().max().item()
+            
+            # Calculate TFLOPS (2*M*N*K for matmul)
+            flops = 2 * M * N * K
             triton_tflops = flops / (triton_time / 1000) / 1e12
             cutile_tflops = flops / (cutile_time / 1000) / 1e12
             
