@@ -102,7 +102,45 @@ for k in range(0, K, tile_k):    # K/64 iterations
 | **Small N** | ✓ MODERATE | TMA can multicast B tile to multiple output rows |
 | **Small K** | ✗ LOW | Only 2 iterations, cannot hide TMA latency |
 
----
+### TMA Multicast: Why Small N Helps
+
+In GEMM `C[M,N] = A[M,K] @ B[K,N]`, multiple rows of C need the **same B tile**:
+
+```
+         B (K x N)
+         ┌──┬──┬──┬──┐
+         │b0│b1│b2│b3│  ← same B tile used by all rows!
+         └──┴──┴──┴──┘
+    
+A (M x K)     C (M x N)
+┌──┐          ┌──┬──┬──┬──┐
+│a0│ ───────► │c0│c1│c2│c3│  ← needs B[k, 0:N]
+├──┤          ├──┼──┼──┼──┤
+│a1│ ───────► │c4│c5│c6│c7│  ← needs SAME B tile!
+├──┤          ├──┼──┼──┼──┤
+│a2│ ───────► │c8│c9│...    │  ← needs SAME B tile!
+└──┘          └──┴──┴──┴──┘
+```
+
+**Without TMA multicast:**
+- CTA computing `C[0, :]` loads B tile from global memory
+- CTA computing `C[1, :]` loads **same B tile** again (redundant!)
+- CTA computing `C[2, :]` loads **same B tile** again (redundant!)
+
+**With TMA multicast:**
+```sass
+UTMALDG.2D.MULTICAST [UR20], [UR18], UR31   ; Load ONCE, broadcast to many CTAs
+```
+- TMA loads B tile **once** from global memory
+- Hardware **broadcasts** it to multiple CTAs simultaneously
+- All CTAs computing different rows of C receive the same B tile
+
+**Why Small N maximizes this benefit:**
+- Fewer output columns = fewer unique B tiles
+- Each B tile is reused by **more rows** of C
+- **More multicast savings per tile!**
+
+When N is large (e.g., 8192), there are many different B tiles, so each one is reused less - multicast benefit diminishes.
 
 ## Summary Table
 
