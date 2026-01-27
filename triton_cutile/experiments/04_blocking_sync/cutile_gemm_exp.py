@@ -262,6 +262,37 @@ class CutileGemmExp:
                     print(f"  SASS saved: {sass_path}")
                 except Exception as e:
                     print(f"  Warning: Could not extract SASS: {e}")
+                
+                # Extract PTX from debug section using strings
+                ptx_path = os.path.join(backend_dir, f"gemm_exp_sm{self.target_sm}.ptx")
+                try:
+                    strings_result = subprocess.run(
+                        ['strings', new_path],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if strings_result.returncode == 0:
+                        lines = strings_result.stdout.split('\n')
+                        ptx_start_idx = -1
+                        for i, line in enumerate(lines):
+                            if '.version 9.1' in line or '.version 9.' in line:
+                                ptx_start_idx = i
+                                break
+                        
+                        if ptx_start_idx >= 0:
+                            ptx_content = '\n'.join(lines[ptx_start_idx:])
+                            with open(ptx_path, 'w') as f:
+                                f.write(ptx_content)
+                            ptx_lines = [l for l in ptx_content.split('\n') if l.strip()]
+                            artifacts['ptx'] = ptx_path
+                            print(f"  PTX saved: {ptx_path} ({len(ptx_lines)} lines)")
+                        else:
+                            print(f"  Warning: No PTX found in debug section (no .version directive)")
+                    else:
+                        print(f"  Warning: Failed to run strings: {strings_result.stderr}")
+                except Exception as e:
+                    print(f"  Warning: Could not extract PTX: {e}")
         
         return {
             'backend': self.name,
